@@ -61,8 +61,6 @@ textarea{min-height:130px;resize:vertical}
 </aside>
 <main id="main"></main>
 
-<script src="supabase.js"></script>
-<script>window.supabase||document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"><\/script>')</script>
 <script>
 const $=(s,r=document)=>r.querySelector(s);
 const store={get:(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
@@ -76,59 +74,30 @@ function md(t){
 }
 const pages=[
  ['home','🏠 Bosh sahifa'],['tutor','🤖 AI Ustoz'],['summary','📝 Konspekt'],
- ['quiz','🧪 Test'],['cards','🃏 Kartochkalar'],['plan','✅ Reja'],['account','👤 Hisob']
+ ['quiz','🧪 Test'],['cards','🃏 Kartochkalar'],['plan','✅ Reja']
 ];
-const SUPABASE_URL='https://bncetlipguctqschkblj.supabase.co';
-const SUPABASE_KEY='sb_publishable_9GDih0IeBD0aJu198Lr7pQ_f4HrzhTh'; // ommaviy (publishable) kalit, RLS himoyalaydi
-const sb=window.supabase?window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
-let cur='home';
-const S={user:null,lang:store.get('lang','o\'zbek'),
+const S={key:store.get('key',''),model:store.get('model','gemini-2.5-flash'),lang:store.get('lang','o\'zbek'),
  chat:[],tasks:store.get('tasks',[]),stats:store.get('stats',{asked:0,quiz:0,right:0})};
 
 async function gemini(prompt,{history=[],system='',json=false}={}){
-  if(!sb) throw new Error('Supabase yuklanmadi (internet aloqasini tekshiring).');
-  if(!S.user) throw new Error('Gemini ishlashi uchun avval "Hisob" bo\'limida kiring.');
-  const{data,error}=await sb.functions.invoke('gemini',{body:{
+  if(!S.key) throw new Error('Avval "Sozlamalar" bo\'limida Gemini API kalitini kiriting.');
+  const body={
     systemInstruction:{parts:[{text:`Sen BilimUz platformasidagi yordamchi o'qituvchisan. Javoblarni ${S.lang} tilida, aniq va tushunarli yoz. ${system}`}]},
-    contents:[...history,{role:'user',parts:[{text:prompt}]}],
-    json
-  }});
-  if(error){
-    let m=error.message;
-    try{const j=await error.context.json();if(j&&j.error)m=j.error}catch(e){}
-    throw new Error(m);
-  }
-  if(!data||!data.text) throw new Error((data&&data.error)||'Gemini bo\'sh javob qaytardi.');
-  return data.text;
-}
-const persist=()=>store.set('tasks',S.tasks.map(({t,d,id})=>({t,d,id})));
-async function dbTaskAdd(t){if(!S.user)return;const{data}=await sb.from('tasks').insert({title:t.t,done:t.d}).select('id').single();if(data)t.id=data.id}
-async function dbTaskUpdate(t){if(!S.user||!t.id)return;await sb.from('tasks').update({done:t.d}).eq('id',t.id)}
-async function dbTaskDelete(t){if(!S.user||!t.id)return;await sb.from('tasks').delete().eq('id',t.id)}
-async function dbQuiz(topic,level,total,correct){if(!S.user)return;await sb.from('quiz_results').insert({topic,level,total,correct})}
-async function dbChat(role,content){if(!S.user)return;await sb.from('chat_messages').insert({role,content})}
-async function dbChatClear(){if(!S.user)return;await sb.from('chat_messages').delete().eq('user_id',S.user.id)}
-async function dbLoad(){
-  if(!S.user)return;
-  const t=await sb.from('tasks').select('id,title,done').order('id');
-  if(t.data){
-    if(!t.data.length&&S.tasks.length){for(const x of S.tasks)await dbTaskAdd(x)}
-    else S.tasks=t.data.map(r=>({id:r.id,t:r.title,d:r.done}));
-    persist();
-  }
-  const q=await sb.from('quiz_results').select('total,correct');
-  if(q.data){S.stats.quiz=q.data.reduce((a,r)=>a+r.total,0);S.stats.right=q.data.reduce((a,r)=>a+r.correct,0)}
-  const c=await sb.from('chat_messages').select('role,content').order('id',{ascending:false}).limit(40);
-  if(c.data){S.chat=c.data.reverse().map(r=>({role:r.role,parts:[{text:r.content}]}))}
-  const n=await sb.from('chat_messages').select('id',{count:'exact',head:true}).eq('role','user');
-  if(n.count!=null)S.stats.asked=n.count;
-  store.set('stats',S.stats);
+    contents:[...history,{role:'user',parts:[{text:prompt}]}]
+  };
+  if(json) body.generationConfig={responseMimeType:'application/json'};
+  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(S.model)}:generateContent`,{
+    method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':S.key},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.error?.message||('Xatolik: '+r.status));
+  const t=d.candidates?.[0]?.content?.parts?.map(p=>p.text).join('')||'';
+  if(!t) throw new Error('Gemini bo\'sh javob qaytardi.');
+  return t;
 }
 const parseJSON=t=>JSON.parse(t.replace(/^```json\s*|```$/g,'').trim());
-const keyWarn=()=>S.user?'':'<div class="warn">🔐 Gemini ishlashi uchun <a href="#" onclick="go(\'account\');return false">hisobga kiring</a>.</div>';
+const keyWarn=()=>S.key?'':'<div class="warn">⚠️ Gemini API kaliti kiritilmagan. <a href="#" onclick="go(\'settings\');return false">Sozlamalar</a> bo\'limiga o\'ting.</div>';
 
 function go(p){
-  cur=p;
   $('#nav').innerHTML=pages.map(([id,l])=>`<button data-p="${id}" class="${id===p?'on':''}">${l}</button>`).join('');
   document.querySelectorAll('button[data-p]').forEach(b=>{b.onclick=()=>go(b.dataset.p);if(b.dataset.p==='settings')b.classList.toggle('on',p==='settings')});
   $('#main').innerHTML='';
@@ -139,15 +108,14 @@ function go(p){
 const views={
 home(m){
   const done=S.tasks.filter(t=>t.d).length;
-  m.innerHTML=`<h1>Xush kelibsiz${S.user?', '+esc(S.user.email.split('@')[0]):''}! 👋</h1><p class="sub">Gemini AI bilan o'qishni osonlashtiring.</p>${keyWarn()}
-  ${S.user?'':'<div class="warn">💾 Ma\'lumotlaringiz saqlanishi uchun <a href="#" onclick="go(\'account\');return false">hisobga kiring</a>.</div>'}
+  m.innerHTML=`<h1>Xush kelibsiz! 👋</h1><p class="sub">Gemini AI bilan o'qishni osonlashtiring.</p>${keyWarn()}
   <div class="card stats">
     <div class="stat"><b>${S.stats.asked}</b>AI savollar</div>
     <div class="stat"><b>${S.stats.quiz}</b>Test savollari</div>
     <div class="stat"><b>${S.stats.quiz?Math.round(S.stats.right/S.stats.quiz*100):0}%</b>To'g'ri javoblar</div>
     <div class="stat"><b>${done}/${S.tasks.length}</b>Vazifalar</div>
   </div>
-  <div class="grid">${pages.slice(1,-1).map(([id,l])=>{const[e,...n]=l.split(' ');const d={tutor:'Istalgan mavzuda savol bering',summary:'Matnni qisqa konspektga aylantiring',quiz:'Mavzu bo\'yicha bilimingizni sinang',cards:'Yodlash uchun kartochkalar',plan:'Vazifa va rejalar'}[id];
+  <div class="grid">${pages.slice(1).map(([id,l])=>{const[e,...n]=l.split(' ');const d={tutor:'Istalgan mavzuda savol bering',summary:'Matnni qisqa konspektga aylantiring',quiz:'Mavzu bo\'yicha bilimingizni sinang',cards:'Yodlash uchun kartochkalar',plan:'Vazifa va rejalar'}[id];
   return `<div class="card tile" onclick="go('${id}')"><div class="e">${e}</div><h3>${n.join(' ')}</h3><p>${d}</p></div>`}).join('')}</div>`;
 },
 tutor(m){
@@ -166,13 +134,13 @@ tutor(m){
     chat.insertAdjacentHTML('beforeend','<div class="m a" id="typ">Yozmoqda...</div>');chat.scrollTop=chat.scrollHeight;
     try{
       const a=await gemini(q,{history:hist,system:'Qadam-baqadam tushuntir va oxirida qisqa misol yoki mashq ber.'});
-      S.chat.push({role:'model',parts:[{text:a}]});S.stats.asked++;store.set('stats',S.stats);dbChat('user',q);dbChat('model',a);
+      S.chat.push({role:'model',parts:[{text:a}]});S.stats.asked++;store.set('stats',S.stats);
     }catch(e){S.chat.pop();S.chat.push({role:'user',parts:[{text:q}]});S.chat.push({role:'model',parts:[{text:'⚠️ '+e.message}]})}
     $('#send').disabled=false;draw();
   };
   $('#send').onclick=send;
   $('#q').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}};
-  $('#clr').onclick=()=>{S.chat=[];dbChatClear();draw()};
+  $('#clr').onclick=()=>{S.chat=[];draw()};
 },
 summary(m){
   m.innerHTML=`<h1>📝 Konspekt</h1><p class="sub">Matnni joylang — Gemini qisqa konspekt qilib beradi.</p>${keyWarn()}
@@ -204,7 +172,7 @@ quiz(m){
           if(k===x.answer){b.classList.add('ok');score++;S.stats.right++}else{b.classList.add('bad');c.querySelectorAll('.opt')[x.answer].classList.add('ok')}
           store.set('stats',S.stats);
           const e=$('.exp',c);e.style.display='block';e.textContent='💡 '+(x.explanation||'');
-          if(ans===j.length&&(dbQuiz(tp,$('#lvl').value,j.length,score),true))$('#qs').insertAdjacentHTML('beforeend',`<div class="card"><h2>Natija: ${score}/${j.length} (${Math.round(score/j.length*100)}%)</h2></div>`);
+          if(ans===j.length)$('#qs').insertAdjacentHTML('beforeend',`<div class="card"><h2>Natija: ${score}/${j.length} (${Math.round(score/j.length*100)}%)</h2></div>`);
         });
         $('#qs').appendChild(c);
       });
@@ -231,57 +199,39 @@ plan(m){
     const d=S.tasks.filter(t=>t.d).length,p=S.tasks.length?Math.round(d/S.tasks.length*100):0;
     $('#pl').innerHTML=`<div class="bar"><i style="width:${p}%"></i></div><small>${d}/${S.tasks.length} bajarildi (${p}%)</small>`+
     S.tasks.map((t,i)=>`<div class="task ${t.d?'d':''}"><input type="checkbox" ${t.d?'checked':''} data-i="${i}"><span>${esc(t.t)}</span><button class="btn g" data-x="${i}">✕</button></div>`).join('');
-    document.querySelectorAll('[data-i]').forEach(c=>c.onchange=()=>{const t=S.tasks[c.dataset.i];t.d=c.checked;persist();dbTaskUpdate(t);draw()});
-    document.querySelectorAll('[data-x]').forEach(c=>c.onclick=()=>{const[t]=S.tasks.splice(c.dataset.x,1);persist();dbTaskDelete(t);draw()});
+    document.querySelectorAll('[data-i]').forEach(c=>c.onchange=()=>{S.tasks[c.dataset.i].d=c.checked;store.set('tasks',S.tasks);draw()});
+    document.querySelectorAll('[data-x]').forEach(c=>c.onclick=()=>{S.tasks.splice(c.dataset.x,1);store.set('tasks',S.tasks);draw()});
   };
   m.innerHTML=`<h1>✅ O'quv reja</h1><p class="sub">Vazifalaringizni kuzating yoki Gemini'dan reja tuzdiring.</p>${keyWarn()}
   <div class="card"><div class="row"><input id="nt" placeholder="Yangi vazifa..."><button class="btn" id="add">Qo'shish</button></div>
   <div class="row"><input id="goal" placeholder="Maqsad (masalan: 1 haftada IELTS Writing'ga tayyorlanish)"><button class="btn g" id="ai">✨ AI reja tuzsin</button></div></div>
   <div class="card" id="pl"></div>`;
-  const add=()=>{const v=$('#nt').value.trim();if(!v)return;const t={t:v,d:false};S.tasks.push(t);persist();dbTaskAdd(t);$('#nt').value='';draw()};
+  const add=()=>{const v=$('#nt').value.trim();if(!v)return;S.tasks.push({t:v,d:false});store.set('tasks',S.tasks);$('#nt').value='';draw()};
   $('#add').onclick=add;$('#nt').onkeydown=e=>{if(e.key==='Enter')add()};
   $('#ai').onclick=async()=>{
     const g=$('#goal').value.trim();if(!g)return;$('#ai').disabled=true;
     try{
       const j=parseJSON(await gemini(`Talaba uchun maqsad: "${g}". 6-10 ta aniq, kichik o'quv vazifasidan iborat reja tuz. FAQAT JSON massiv: ["vazifa 1","vazifa 2"]`,{json:true}));
-      j.forEach(x=>{const t={t:String(x),d:false};S.tasks.push(t);dbTaskAdd(t)});persist();draw();
+      j.forEach(t=>S.tasks.push({t:String(t),d:false}));store.set('tasks',S.tasks);draw();
     }catch(e){alert(e.message)}
     $('#ai').disabled=false;
   };
   draw();
 },
-account(m){
-  if(!sb){m.innerHTML='<h1>👤 Hisob</h1><div class="warn">Supabase yuklanmadi (internet aloqasini tekshiring).</div>';return}
-  if(S.user){
-    m.innerHTML=`<h1>👤 Hisob</h1><p class="sub">Ma'lumotlaringiz bulutda saqlanmoqda.</p>
-    <div class="card"><p><b>${esc(S.user.email)}</b></p><button class="btn g" id="out">Chiqish</button></div>`;
-    $('#out').onclick=async()=>{await sb.auth.signOut();S.chat=[];S.tasks=[];persist();go('account')};
-    return;
-  }
-  m.innerHTML=`<h1>👤 Hisob</h1><p class="sub">Kiring yoki ro'yxatdan o'ting — vazifalar, test natijalari va chat tarixi saqlanadi.</p>
-  <div class="card"><div class="row"><input id="em" type="email" placeholder="Email" autocomplete="email"></div>
-  <div class="row"><input id="pw" type="password" placeholder="Parol (kamida 6 belgi)" autocomplete="current-password"></div>
-  <div class="row"><button class="btn" id="in">Kirish</button><button class="btn g" id="up">Ro'yxatdan o'tish</button></div><div id="am"></div></div>`;
-  const msg=t=>$('#am').textContent=t;
-  $('#in').onclick=async()=>{msg('Kutilmoqda...');const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(error)msg('⚠️ '+error.message)};
-  $('#up').onclick=async()=>{msg('Kutilmoqda...');const{data,error}=await sb.auth.signUp({email:$('#em').value.trim(),password:$('#pw').value});if(error)msg('⚠️ '+error.message);else if(!data.session)msg('✅ Emailingizga tasdiqlash xati yuborildi. Tasdiqlagach kiring.')};
-},
 settings(m){
-  m.innerHTML=`<h1>⚙️ Sozlamalar</h1><p class="sub">Gemini AI serverda ulangan, kalit kiritish shart emas.</p>
-  <div class="card"><label><b>Javob tili</b></label><div class="row"><select id="lg"><option>o'zbek</option><option>rus</option><option>ingliz</option></select></div>
-  <div class="row"><button class="btn" id="sv">Saqlash</button><button class="btn g" id="ts">Gemini ulanishini tekshirish</button></div><div id="msg"></div></div>`;
+  m.innerHTML=`<h1>⚙️ Sozlamalar</h1><p class="sub">Gemini'ni ulash.</p>
+  <div class="card"><label><b>Gemini API kaliti</b></label>
+  <div class="row"><input id="k" type="password" placeholder="AIza..." value="${esc(S.key)}"></div>
+  <p class="sub" style="margin:0 0 12px">Bepul kalit: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Kalit faqat shu brauzerda saqlanadi.</p>
+  <label><b>Model</b></label><div class="row"><input id="md" value="${esc(S.model)}"></div>
+  <label><b>Javob tili</b></label><div class="row"><select id="lg"><option>o'zbek</option><option>rus</option><option>ingliz</option></select></div>
+  <div class="row"><button class="btn" id="sv">Saqlash</button><button class="btn g" id="ts">Ulanishni tekshirish</button></div><div id="msg"></div></div>`;
   $('#lg').value=S.lang;
-  const save=()=>{S.lang=$('#lg').value;store.set('lang',S.lang)};
+  const save=()=>{S.key=$('#k').value.trim();S.model=$('#md').value.trim()||'gemini-2.5-flash';S.lang=$('#lg').value;store.set('key',S.key);store.set('model',S.model);store.set('lang',S.lang)};
   $('#sv').onclick=()=>{save();$('#msg').textContent='✅ Saqlandi'};
   $('#ts').onclick=async()=>{save();$('#msg').textContent='Tekshirilmoqda...';try{await gemini('Salom de, bitta so\'z bilan.');$('#msg').textContent='✅ Gemini ulandi!'}catch(e){$('#msg').textContent='⚠️ '+e.message}};
 }
 };
-if(sb)sb.auth.onAuthStateChange((ev,session)=>{
-  S.user=session?session.user:null;
-  if(ev==='INITIAL_SESSION'||ev==='SIGNED_IN'||ev==='SIGNED_OUT'){
-    setTimeout(async()=>{await dbLoad();go(cur==='account'&&S.user?'home':cur)},0);
-  }
-});
 go('home');
 </script>
 </body>
