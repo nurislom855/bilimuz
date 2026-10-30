@@ -81,23 +81,24 @@ const SUPABASE_URL='https://bncetlipguctqschkblj.supabase.co';
 const SUPABASE_KEY='sb_publishable_9GDih0IeBD0aJu198Lr7pQ_f4HrzhTh'; // ommaviy (publishable) kalit, RLS himoyalaydi
 const sb=window.supabase?window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY):null;
 let cur='home';
-const S={user:null,key:store.get('key',''),model:store.get('model','gemini-2.5-flash'),lang:store.get('lang','o\'zbek'),
+const S={user:null,lang:store.get('lang','o\'zbek'),
  chat:[],tasks:store.get('tasks',[]),stats:store.get('stats',{asked:0,quiz:0,right:0})};
 
 async function gemini(prompt,{history=[],system='',json=false}={}){
-  if(!S.key) throw new Error('Avval "Sozlamalar" bo\'limida Gemini API kalitini kiriting.');
-  const body={
+  if(!sb) throw new Error('Supabase yuklanmadi (internet aloqasini tekshiring).');
+  if(!S.user) throw new Error('Gemini ishlashi uchun avval "Hisob" bo\'limida kiring.');
+  const{data,error}=await sb.functions.invoke('gemini',{body:{
     systemInstruction:{parts:[{text:`Sen BilimUz platformasidagi yordamchi o'qituvchisan. Javoblarni ${S.lang} tilida, aniq va tushunarli yoz. ${system}`}]},
-    contents:[...history,{role:'user',parts:[{text:prompt}]}]
-  };
-  if(json) body.generationConfig={responseMimeType:'application/json'};
-  const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(S.model)}:generateContent`,{
-    method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':S.key},body:JSON.stringify(body)});
-  const d=await r.json();
-  if(!r.ok) throw new Error(d.error?.message||('Xatolik: '+r.status));
-  const t=d.candidates?.[0]?.content?.parts?.map(p=>p.text).join('')||'';
-  if(!t) throw new Error('Gemini bo\'sh javob qaytardi.');
-  return t;
+    contents:[...history,{role:'user',parts:[{text:prompt}]}],
+    json
+  }});
+  if(error){
+    let m=error.message;
+    try{const j=await error.context.json();if(j&&j.error)m=j.error}catch(e){}
+    throw new Error(m);
+  }
+  if(!data||!data.text) throw new Error((data&&data.error)||'Gemini bo\'sh javob qaytardi.');
+  return data.text;
 }
 const persist=()=>store.set('tasks',S.tasks.map(({t,d,id})=>({t,d,id})));
 async function dbTaskAdd(t){if(!S.user)return;const{data}=await sb.from('tasks').insert({title:t.t,done:t.d}).select('id').single();if(data)t.id=data.id}
@@ -123,7 +124,7 @@ async function dbLoad(){
   store.set('stats',S.stats);
 }
 const parseJSON=t=>JSON.parse(t.replace(/^```json\s*|```$/g,'').trim());
-const keyWarn=()=>S.key?'':'<div class="warn">⚠️ Gemini API kaliti kiritilmagan. <a href="#" onclick="go(\'settings\');return false">Sozlamalar</a> bo\'limiga o\'ting.</div>';
+const keyWarn=()=>S.user?'':'<div class="warn">🔐 Gemini ishlashi uchun <a href="#" onclick="go(\'account\');return false">hisobga kiring</a>.</div>';
 
 function go(p){
   cur=p;
@@ -265,15 +266,11 @@ account(m){
   $('#up').onclick=async()=>{msg('Kutilmoqda...');const{data,error}=await sb.auth.signUp({email:$('#em').value.trim(),password:$('#pw').value});if(error)msg('⚠️ '+error.message);else if(!data.session)msg('✅ Emailingizga tasdiqlash xati yuborildi. Tasdiqlagach kiring.')};
 },
 settings(m){
-  m.innerHTML=`<h1>⚙️ Sozlamalar</h1><p class="sub">Gemini'ni ulash.</p>
-  <div class="card"><label><b>Gemini API kaliti</b></label>
-  <div class="row"><input id="k" type="password" placeholder="AIza..." value="${esc(S.key)}"></div>
-  <p class="sub" style="margin:0 0 12px">Bepul kalit: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Kalit faqat shu brauzerda saqlanadi.</p>
-  <label><b>Model</b></label><div class="row"><input id="md" value="${esc(S.model)}"></div>
-  <label><b>Javob tili</b></label><div class="row"><select id="lg"><option>o'zbek</option><option>rus</option><option>ingliz</option></select></div>
-  <div class="row"><button class="btn" id="sv">Saqlash</button><button class="btn g" id="ts">Ulanishni tekshirish</button></div><div id="msg"></div></div>`;
+  m.innerHTML=`<h1>⚙️ Sozlamalar</h1><p class="sub">Gemini AI serverda ulangan, kalit kiritish shart emas.</p>
+  <div class="card"><label><b>Javob tili</b></label><div class="row"><select id="lg"><option>o'zbek</option><option>rus</option><option>ingliz</option></select></div>
+  <div class="row"><button class="btn" id="sv">Saqlash</button><button class="btn g" id="ts">Gemini ulanishini tekshirish</button></div><div id="msg"></div></div>`;
   $('#lg').value=S.lang;
-  const save=()=>{S.key=$('#k').value.trim();S.model=$('#md').value.trim()||'gemini-2.5-flash';S.lang=$('#lg').value;store.set('key',S.key);store.set('model',S.model);store.set('lang',S.lang)};
+  const save=()=>{S.lang=$('#lg').value;store.set('lang',S.lang)};
   $('#sv').onclick=()=>{save();$('#msg').textContent='✅ Saqlandi'};
   $('#ts').onclick=async()=>{save();$('#msg').textContent='Tekshirilmoqda...';try{await gemini('Salom de, bitta so\'z bilan.');$('#msg').textContent='✅ Gemini ulandi!'}catch(e){$('#msg').textContent='⚠️ '+e.message}};
 }

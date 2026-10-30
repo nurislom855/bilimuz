@@ -11,9 +11,7 @@ Gemini AI bilan ishlaydigan o'quv platformasi (bitta `index.html` fayl).
 - 👤 Hisob — Supabase Auth (email/parol); vazifalar, test natijalari va chat tarixi bulutda saqlanadi
 
 ## Ishga tushirish
-`index.html` ni brauzerda oching. Gemini uchun API kalitni
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey) dan oling va **Sozlamalar** bo'limiga kiriting.
-Kalit faqat foydalanuvchining brauzerida saqlanadi, bazaga yoki GitHub'ga yozilmaydi.
+`index.html` ni brauzerda oching. Gemini serverda (Supabase Edge Function) ulangan: talabalar kalit kiritmaydi, faqat hisobga kiradi.
 
 ## Baza (Supabase)
 Sxema: `supabase/migrations/`. Jadvallar: `profiles`, `tasks`, `quiz_results`, `chat_messages`.
@@ -22,3 +20,8 @@ Hamma jadvalda RLS yoqilgan: har bir talaba faqat o'z ma'lumotini ko'radi.
 
 ## Deploy
 GitHub Pages: **Settings → Pages → Deploy from branch → main / (root)**.
+
+## Gemini (Supabase Edge Function)
+Funksiya: `supabase/functions/gemini/index.ts`. Kalit **GEMINI_API_KEY** nomi bilan Supabase'da
+(Edge Functions → Secrets) saqlanadi va kodga/GitHub'ga yozilmaydi.
+Funksiya faqat tizimga kirgan foydalanuvchilarga ishlaydi va kuniga 150 ta so'rov bilan cheklangan.
